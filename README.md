@@ -1,12 +1,12 @@
 # Versioned migrations for MongoDB
-[![Build Status](https://travis-ci.org/xakep666/mongo-migrate.svg?branch=master)](https://travis-ci.org/xakep666/mongo-migrate)
-[![codecov](https://codecov.io/gh/xakep666/mongo-migrate/branch/master/graph/badge.svg)](https://codecov.io/gh/xakep666/mongo-migrate)
-[![Go Report Card](https://goreportcard.com/badge/github.com/xakep666/mongo-migrate)](https://goreportcard.com/report/github.com/xakep666/mongo-migrate)
-[![GoDoc](https://godoc.org/github.com/xakep666/mongo-migrate?status.svg)](https://godoc.org/github.com/xakep666/mongo-migrate)
+[![Build Status](https://travis-ci.org/trushkevich/mongo-migrate.svg?branch=master)](https://travis-ci.org/trushkevich/mongo-migrate)
+[![codecov](https://codecov.io/gh/trushkevich/mongo-migrate/branch/master/graph/badge.svg)](https://codecov.io/gh/trushkevich/mongo-migrate)
+[![Go Report Card](https://goreportcard.com/badge/github.com/trushkevich/mongo-migrate)](https://goreportcard.com/report/github.com/trushkevich/mongo-migrate)
+[![GoDoc](https://godoc.org/github.com/trushkevich/mongo-migrate?status.svg)](https://godoc.org/github.com/trushkevich/mongo-migrate)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 This package allows to perform versioned migrations on your MongoDB using [mongo-go-driver](https://github.com/mongodb/mongo-go-driver).
-Inspired by [go-pg migrations](https://github.com/go-pg/migrations).
+Based on [mongo-migrate](https://github.com/xakep666/mongo-migrate).
 
 Table of Contents
 =================
@@ -24,7 +24,7 @@ Table of Contents
 
 ## Installation
 ```bash
-go get -v -u github.com/xakep666/mongo-migrate
+go get -v -u github.com/trushkevich/mongo-migrate
 ```
 
 ## Usage
@@ -42,7 +42,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	migrate "github.com/xakep666/mongo-migrate"
+	migrate "github.com/trushkevich/mongo-migrate"
 )
 
 func init() {
@@ -70,7 +70,7 @@ func init() {
 ```go
 import (
     ...
-    migrate "github.com/xakep666/mongo-migrate"
+    migrate "github.com/trushkevich/mongo-migrate"
     _ "path/to/migrations_package" // database migrations
     ...
 )
