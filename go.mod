@@ -1,6 +1,7 @@
 module github.com/trushkevich/mongo-migrate
 
 require (
+	github.com/go-errors/errors v1.0.1 // indirect
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/golang/snappy v0.0.1 // indirect
 	github.com/google/go-cmp v0.3.0 // indirect

@@ -148,7 +148,7 @@ func MongoConnect(host, user, password, database string) (*mongo.Database, error
 
 ## How it works?
 This package creates a special collection (by default it`s name is "migrations") for versioning.
-In this collection stored documents like
+For each applied migration in this collection is being stored a document like
 ```json
 {
     "_id": "<mongodb-generated id>",
@@ -157,9 +157,10 @@ In this collection stored documents like
     "timestamp": "<when applied>"
 }
 ```
-Current database version determined as version from latest inserted document.
+When you roll back then corresponding documents are being removed from the collection.
+Migration versions must be unique.
 
-You can change collection name using `SetMigrationsCollection` methods.
+You can change collection name using `SetMigrationsCollection` method.
 Remember that if you want to use custom collection name you need to set it before running migrations.
 
 ## License

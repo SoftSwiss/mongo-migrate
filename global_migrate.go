@@ -89,9 +89,9 @@ func SetMigrationsCollection(name string) {
 	globalMigrate.SetMigrationsCollection(name)
 }
 
-// Version returns current database version.
-func Version() (uint64, string, error) {
-	return globalMigrate.Version()
+// IsMigrated returns true if all migrations have been migrated, false otherwise.
+func IsMigrated() (bool, error) {
+	return globalMigrate.IsMigrated()
 }
 
 // Up performs "up" migration using registered migrations.
