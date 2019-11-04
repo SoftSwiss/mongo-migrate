@@ -1,4 +1,4 @@
-module github.com/trushkevich/mongo-migrate
+module github.com/SoftSwiss/mongo-migrate
 
 require (
 	github.com/go-errors/errors v1.0.1 // indirect
