@@ -159,10 +159,13 @@ func (m *Migrate) getCollections() (collections []collectionSpecification, err e
 	return
 }
 
-// loadMigratedVersions returns array of migration versions stored in the database.
-func (m *Migrate) loadMigratedVersions() ([]uint64, error) {
-	if err := m.createCollectionIfNotExist(m.migrationsCollection); err != nil {
-		return nil, err
+// loadMigratedVersions assigns migration versions stored in the database
+// to migratedVersions prop of Migrate object
+func (m *Migrate) loadMigratedVersions() error {
+	var err error
+
+	if err = m.createCollectionIfNotExist(m.migrationsCollection); err != nil {
+		return err
 	}
 
 	filter := bson.D{}
@@ -172,7 +175,7 @@ func (m *Migrate) loadMigratedVersions() ([]uint64, error) {
 
 	cur, err := m.db.Collection(m.migrationsCollection).Find(context.TODO(), filter, options)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer cur.Close(context.Background())
 
@@ -181,14 +184,14 @@ func (m *Migrate) loadMigratedVersions() ([]uint64, error) {
 	for cur.Next(context.Background()) {
 		var versionRecord versionRecord
 
-		if err := cur.Decode(&versionRecord); err != nil {
-			return nil, err
+		if err = cur.Decode(&versionRecord); err != nil {
+			return err
 		}
 
 		versionRecords = append(versionRecords, versionRecord)
 	}
-	if err := cur.Err(); err != nil {
-		return nil, err
+	if err = cur.Err(); err != nil {
+		return err
 	}
 
 	versions := make([]uint64, len(versionRecords))
@@ -196,10 +199,10 @@ func (m *Migrate) loadMigratedVersions() ([]uint64, error) {
 		versions[i] = vr.Version
 	}
 
-	copy(m.migratedVersions, versions)
+	m.migratedVersions = versions
 	m.isLoadedMigratedVersions = true
 
-	return versions, nil
+	return err
 }
 
 // addMigratedVersion adds version to migratedVersions prop of Migrate object.
@@ -247,7 +250,7 @@ func (m *Migrate) isMigratedVersion(version uint64) bool {
 // IsMigrated returns true if all migrations have been migrated, false otherwise.
 func (m *Migrate) IsMigrated() (bool, error) {
 	if !m.isLoadedMigratedVersions {
-		if _, err := m.loadMigratedVersions(); err != nil {
+		if err := m.loadMigratedVersions(); err != nil {
 			return false, err
 		}
 	}
@@ -265,7 +268,7 @@ func (m *Migrate) IsMigrated() (bool, error) {
 // If n>0 only n migrations with newer version will be performed.
 func (m *Migrate) Up(n int) error {
 	if !m.isLoadedMigratedVersions {
-		if _, err := m.loadMigratedVersions(); err != nil {
+		if err := m.loadMigratedVersions(); err != nil {
 			return err
 		}
 	}
@@ -296,7 +299,7 @@ func (m *Migrate) Up(n int) error {
 // If n>0 only n migrations with older version will be performed.
 func (m *Migrate) Down(n int) error {
 	if !m.isLoadedMigratedVersions {
-		if _, err := m.loadMigratedVersions(); err != nil {
+		if err := m.loadMigratedVersions(); err != nil {
 			return err
 		}
 	}

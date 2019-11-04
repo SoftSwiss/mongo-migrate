@@ -88,35 +88,114 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func TestLoadMigratedVersions(t *testing.T) {
+	defer cleanup(db)
+	migrate := NewMigrate(db,
+		Migration{Version: 1, Description: "hello", Up: func(db *mongo.Database) error {
+			return nil
+		}, Down: func(db *mongo.Database) error {
+			return nil
+		}},
+		Migration{Version: 2, Description: "world", Up: func(db *mongo.Database) error {
+			return nil
+		}, Down: func(db *mongo.Database) error {
+			return nil
+		}},
+	)
+
+	migrate.createCollectionIfNotExist(migrate.migrationsCollection)
+
+	err := migrate.loadMigratedVersions()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
+		return
+	}
+
+	if err = migrate.Up(AllAvailable); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	err = migrate.loadMigratedVersions()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{1, 2}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
+		return
+	}
+
+	if err = migrate.Down(1); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	err = migrate.loadMigratedVersions()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{1}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
+		return
+	}
+
+	if err = migrate.Down(1); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	err = migrate.loadMigratedVersions()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
+		return
+	}
+}
+
 func TestInsertVersion(t *testing.T) {
+	var err error
+
 	defer cleanup(db)
 	migrate := NewMigrate(db)
-	if err := migrate.insertVersion(1, "hello"); err != nil {
+	if err = migrate.insertVersion(1, "hello"); err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	versions, err := migrate.loadMigratedVersions()
+	err = migrate.loadMigratedVersions()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
 
-	if !reflect.DeepEqual(versions, []uint64{1}) {
-		t.Errorf("Unexpected versions loaded %v", versions)
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{1}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
 		return
 	}
 
-	if err := migrate.insertVersion(2, "world"); err != nil {
+	if err = migrate.insertVersion(2, "world"); err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	versions, err = migrate.loadMigratedVersions()
+	err = migrate.loadMigratedVersions()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if !reflect.DeepEqual(versions, []uint64{1, 2}) {
-		t.Errorf("Unexpected versions loaded %v", versions)
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{1, 2}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
 		return
 	}
 }
