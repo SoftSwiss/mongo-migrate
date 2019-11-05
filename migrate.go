@@ -55,7 +55,7 @@ func NewMigrate(db *mongo.Database, migrations ...Migration) *Migrate {
 		db:                       db,
 		migrations:               internalMigrations,
 		migrationsCollection:     defaultMigrationsCollection,
-		migratedVersions:         make([]uint64, 0),
+		migratedVersions:         []uint64{},
 		isLoadedMigratedVersions: false,
 	}
 }
@@ -98,22 +98,17 @@ func (m *Migrate) createCollectionIfNotExist(name string) error {
 		}
 
 		command := bson.D{bson.E{Key: "create", Value: name}}
-		err = m.db.RunCommand(nil, command).Err()
-
-		if err == nil {
+		if err = m.db.RunCommand(nil, command).Err(); err == nil {
 			_, err = m.db.Collection(name).Indexes().CreateOne(ctx, mongo.IndexModel{
 				Keys: bson.D{{"version", 1}},
 				Options: options.Index().SetName(fmt.Sprintf("index-%s-on-version", name)),
 			})
+			sessionContext.CommitTransaction(sessionContext)
+			return nil
 		}
 
-		if err != nil {
-			sessionContext.AbortTransaction(sessionContext)
-			return err
-		} else {
-			sessionContext.CommitTransaction(sessionContext)
-		}
-		return nil
+		sessionContext.AbortTransaction(sessionContext)
+		return err
 	})
 
 	return err
@@ -179,30 +174,23 @@ func (m *Migrate) loadMigratedVersions() error {
 	}
 	defer cur.Close(context.Background())
 
-	versionRecords := make([]versionRecord, 0)
+	m.migratedVersions = []uint64{}
 
 	for cur.Next(context.Background()) {
-		var versionRecord versionRecord
-
-		if err = cur.Decode(&versionRecord); err != nil {
+		var rec versionRecord
+		if err = cur.Decode(&rec); err != nil {
 			return err
 		}
-
-		versionRecords = append(versionRecords, versionRecord)
+		m.addMigratedVersion(rec.Version)
 	}
+
 	if err = cur.Err(); err != nil {
 		return err
 	}
 
-	versions := make([]uint64, len(versionRecords))
-	for i, vr := range versionRecords {
-		versions[i] = vr.Version
-	}
-
-	m.migratedVersions = versions
 	m.isLoadedMigratedVersions = true
 
-	return err
+	return nil
 }
 
 // addMigratedVersion adds version to migratedVersions prop of Migrate object.
@@ -211,6 +199,8 @@ func (m *Migrate) addMigratedVersion(version uint64) {
 }
 
 // removeMigratedVersion removes last version from migratedVersions prop of Migrate object.
+// TODO: implement removing of a specific version passed, in order to be able to rollback
+// arbitraty migration by it's version
 func (m *Migrate) removeMigratedVersion(version uint64) {
 	m.migratedVersions[len(m.migratedVersions)-1] = 0
 	m.migratedVersions = m.migratedVersions[:len(m.migratedVersions)-1]

@@ -64,7 +64,7 @@ func cleanup(db *mongo.Database) {
 		}
 	}
 
-	globalMigrate.migratedVersions = make([]uint64, 0)
+	globalMigrate.migratedVersions = []uint64{}
 	globalMigrate.isLoadedMigratedVersions = false
 }
 
