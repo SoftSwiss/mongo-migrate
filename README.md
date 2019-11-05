@@ -163,5 +163,10 @@ Migration versions must be unique.
 You can change collection name using `SetMigrationsCollection` method.
 Remember that if you want to use custom collection name you need to set it before running migrations.
 
+## Running tests
+```
+MONGO_URL=mongodb://[username]:[password]@[host]:[port]/[test_database] go test *.go
+```
+
 ## License
 mongo-migrate project is licensed under the terms of the MIT license. Please see LICENSE in this repository for more details.
