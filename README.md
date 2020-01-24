@@ -1,12 +1,12 @@
 # Versioned migrations for MongoDB
-[![Build Status](https://travis-ci.org/xakep666/mongo-migrate.svg?branch=master)](https://travis-ci.org/xakep666/mongo-migrate)
-[![codecov](https://codecov.io/gh/xakep666/mongo-migrate/branch/master/graph/badge.svg)](https://codecov.io/gh/xakep666/mongo-migrate)
-[![Go Report Card](https://goreportcard.com/badge/github.com/xakep666/mongo-migrate)](https://goreportcard.com/report/github.com/xakep666/mongo-migrate)
-[![GoDoc](https://godoc.org/github.com/xakep666/mongo-migrate?status.svg)](https://godoc.org/github.com/xakep666/mongo-migrate)
+[![Build Status](https://travis-ci.org/SoftSwiss/mongo-migrate.svg?branch=master)](https://travis-ci.org/SoftSwiss/mongo-migrate)
+[![codecov](https://codecov.io/gh/SoftSwiss/mongo-migrate/branch/master/graph/badge.svg)](https://codecov.io/gh/SoftSwiss/mongo-migrate)
+[![Go Report Card](https://goreportcard.com/badge/github.com/SoftSwiss/mongo-migrate)](https://goreportcard.com/report/github.com/SoftSwiss/mongo-migrate)
+[![GoDoc](https://godoc.org/github.com/SoftSwiss/mongo-migrate?status.svg)](https://godoc.org/github.com/SoftSwiss/mongo-migrate)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 This package allows to perform versioned migrations on your MongoDB using [mongo-go-driver](https://github.com/mongodb/mongo-go-driver).
-Inspired by [go-pg migrations](https://github.com/go-pg/migrations).
+Based on [mongo-migrate](https://github.com/xakep666/mongo-migrate).
 
 Table of Contents
 =================
@@ -24,7 +24,7 @@ Table of Contents
 
 ## Installation
 ```bash
-go get -v -u github.com/xakep666/mongo-migrate
+go get -v -u github.com/SoftSwiss/mongo-migrate
 ```
 
 ## Usage
@@ -42,7 +42,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	migrate "github.com/xakep666/mongo-migrate"
+	migrate "github.com/SoftSwiss/mongo-migrate"
 )
 
 func init() {
@@ -70,7 +70,7 @@ func init() {
 ```go
 import (
     ...
-    migrate "github.com/xakep666/mongo-migrate"
+    migrate "github.com/SoftSwiss/mongo-migrate"
     _ "path/to/migrations_package" // database migrations
     ...
 )
@@ -148,7 +148,7 @@ func MongoConnect(host, user, password, database string) (*mongo.Database, error
 
 ## How it works?
 This package creates a special collection (by default it`s name is "migrations") for versioning.
-In this collection stored documents like
+For each applied migration in this collection is being stored a document like
 ```json
 {
     "_id": "<mongodb-generated id>",
@@ -157,10 +157,16 @@ In this collection stored documents like
     "timestamp": "<when applied>"
 }
 ```
-Current database version determined as version from latest inserted document.
+When you roll back then corresponding documents are being removed from the collection.
+Migration versions must be unique.
 
-You can change collection name using `SetMigrationsCollection` methods.
+You can change collection name using `SetMigrationsCollection` method.
 Remember that if you want to use custom collection name you need to set it before running migrations.
+
+## Running tests
+```
+MONGO_URL=mongodb://[username]:[password]@[host]:[port]/[test_database] go test *.go
+```
 
 ## License
 mongo-migrate project is licensed under the terms of the MIT license. Please see LICENSE in this repository for more details.

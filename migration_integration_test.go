@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"reflect"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -62,6 +63,9 @@ func cleanup(db *mongo.Database) {
 			panic(err)
 		}
 	}
+
+	globalMigrate.migratedVersions = []uint64{}
+	globalMigrate.isLoadedMigratedVersions = false
 }
 
 var db *mongo.Database
@@ -84,62 +88,146 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestSetGetVersion(t *testing.T) {
+func TestLoadMigratedVersions(t *testing.T) {
 	defer cleanup(db)
-	migrate := NewMigrate(db)
-	if err := migrate.SetVersion(1, "hello"); err != nil {
-		t.Errorf("Unexpected error: %v", err)
-		return
-	}
-	version, description, err := migrate.Version()
+	migrate := NewMigrate(db,
+		Migration{Version: 1, Description: "hello", Up: func(db *mongo.Database) error {
+			return nil
+		}, Down: func(db *mongo.Database) error {
+			return nil
+		}},
+		Migration{Version: 2, Description: "world", Up: func(db *mongo.Database) error {
+			return nil
+		}, Down: func(db *mongo.Database) error {
+			return nil
+		}},
+	)
+
+	migrate.createCollectionIfNotExist(migrate.migrationsCollection)
+
+	err := migrate.loadMigratedVersions()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
-		return
-	}
-	if version != 1 || description != "hello" {
-		t.Errorf("Unexpected version/description %v %v", version, description)
 		return
 	}
 
-	if err := migrate.SetVersion(2, "world"); err != nil {
-		t.Errorf("Unexpected error: %v", err)
-		return
-	}
-	version, description, err = migrate.Version()
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-		return
-	}
-	if version != 2 || description != "world" {
-		t.Errorf("Unexpected version/description %v %v", version, description)
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
 		return
 	}
 
-	if err := migrate.SetVersion(1, "hello"); err != nil {
+	if err = migrate.Up(AllAvailable); err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	version, description, err = migrate.Version()
+
+	err = migrate.loadMigratedVersions()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if version != 1 || description != "hello" {
-		t.Errorf("Unexpected version/description %v %v", version, description)
+
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{1, 2}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
+		return
+	}
+
+	if err = migrate.Down(1); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	err = migrate.loadMigratedVersions()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{1}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
+		return
+	}
+
+	if err = migrate.Down(1); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	err = migrate.loadMigratedVersions()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
 		return
 	}
 }
 
-func TestVersionBeforeSet(t *testing.T) {
+func TestInsertVersion(t *testing.T) {
+	var err error
+
 	defer cleanup(db)
 	migrate := NewMigrate(db)
-	version, _, err := migrate.Version()
+	if err = migrate.insertVersion(1, "hello"); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+	err = migrate.loadMigratedVersions()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if version != 0 {
-		t.Errorf("Unexpected version: %v", err)
+
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{1}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
+		return
+	}
+
+	if err = migrate.insertVersion(2, "world"); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+	err = migrate.loadMigratedVersions()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+	if !reflect.DeepEqual(migrate.migratedVersions, []uint64{1, 2}) {
+		t.Errorf("Unexpected versions loaded %v", migrate.migratedVersions)
+		return
+	}
+}
+
+func TestInitialIsMigratedWithoutMigrations(t *testing.T) {
+	defer cleanup(db)
+	migrate := NewMigrate(db)
+	isMigrated, err := migrate.IsMigrated()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+	if !isMigrated {
+		t.Error("Unexpected migration state when no migrations exist")
+		return
+	}
+}
+
+func TestInitialIsMigratedWithMigrations(t *testing.T) {
+	defer cleanup(db)
+	migrate := NewMigrate(db,
+		Migration{Version: 1, Description: "hello", Up: func(db *mongo.Database) error {
+			return nil
+		}},
+	)
+	isMigrated, err := migrate.IsMigrated()
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+		return
+	}
+	if isMigrated {
+		t.Error("Unexpected migration state when pending migrations exist")
 		return
 	}
 }
@@ -171,13 +259,13 @@ func TestUpMigrations(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	version, description, err := migrate.Version()
+	isMigrated, err := migrate.IsMigrated()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if version != 2 || description != "world" {
-		t.Errorf("Unexpected version/description %v %v", version, description)
+	if !isMigrated {
+		t.Error("Unexpected migration state after applying all migrations")
 		return
 	}
 	result := db.Collection(testCollection).FindOne(context.TODO(), bson.D{{"hello", "world"}})
@@ -270,13 +358,13 @@ func TestDownMigrations(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	version, _, err := migrate.Version()
+	isMigrated, err := migrate.IsMigrated()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if version != 0 {
-		t.Errorf("Unexpected version: %v", version)
+	if isMigrated {
+		t.Error("Unexpected migration state after rolling back all migrations")
 		return
 	}
 	result := db.Collection(testCollection).FindOne(context.TODO(), bson.D{{"hello", "world"}})
@@ -349,13 +437,13 @@ func TestPartialUpMigrations(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	version, description, err := migrate.Version()
+	isMigrated, err := migrate.IsMigrated()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if version != 2 || description != "world" {
-		t.Errorf("Unexpected version/description %v %v", version, description)
+	if isMigrated {
+		t.Error("Unexpected migration state after applying only a part of migrations")
 		return
 	}
 	result := db.Collection(testCollection).FindOne(context.TODO(), bson.D{{"hello", "world"}})
@@ -471,13 +559,13 @@ func TestPartialDownMigrations(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	version, description, err := migrate.Version()
+	isMigrated, err := migrate.IsMigrated()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if version != 2 || description != "world" {
-		t.Errorf("Unexpected version/description: %v %v", version, description)
+	if isMigrated {
+		t.Error("Unexpected migration state after partial rolling back migrations")
 		return
 	}
 	res := db.Collection(testCollection).FindOne(context.TODO(), bson.D{{"a", "b"}})
@@ -499,13 +587,13 @@ func TestUpMigrationWithErrors(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	version, _, err := migrate.Version()
+	isMigrated, err := migrate.IsMigrated()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if version != 0 {
-		t.Errorf("Unexpected version: %v", version)
+	if isMigrated {
+		t.Error("Unexpected migration state after applying migration with error")
 		return
 	}
 }
@@ -532,13 +620,13 @@ func TestDownMigrationWithErrors(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	version, _, err := migrate.Version()
+	isMigrated, err := migrate.IsMigrated()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if version != 1 {
-		t.Errorf("Unexpected version: %v", version)
+	if !isMigrated {
+		t.Error("Unexpected migration state after rolling back migration with error")
 		return
 	}
 }
@@ -564,13 +652,13 @@ func TestMultipleUpMigration(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	version, description, err := migrate.Version()
+	isMigrated, err := migrate.IsMigrated()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if version != 2 || description != "world" {
-		t.Errorf("Unexpected version/description %v %v", version, description)
+	if !isMigrated {
+		t.Error("Unexpected migration state after multiple applying of all migrations")
 		return
 	}
 	if cnt != 2 {
@@ -608,13 +696,13 @@ func TestMultipleDownMigration(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	version, _, err := migrate.Version()
+	isMigrated, err := migrate.IsMigrated()
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 		return
 	}
-	if version != 0 {
-		t.Errorf("Unexpected version: %v", version)
+	if isMigrated {
+		t.Error("Unexpected migration state after multiple rolling back of all migrations")
 		return
 	}
 	if cnt != 2 {

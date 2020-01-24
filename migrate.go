@@ -4,6 +4,7 @@ package migrate
 import (
 	"context"
 	"time"
+	"fmt"
 
 	"github.com/pkg/errors"
 	"go.mongodb.org/mongo-driver/bson"
@@ -28,23 +29,34 @@ const defaultMigrationsCollection = "migrations"
 const AllAvailable = -1
 
 // Migrate is type for performing migrations in provided database.
-// Database versioned using dedicated collection.
-// Each migration applying ("up" and "down") adds new document to collection.
-// This document consists migration version, migration description and timestamp.
-// Current database version determined as version in latest added document (biggest "_id") from collection mentioned above.
+// Information about which migrations have been applied is being stored in a dedicated collection.
+// Each migration applying ("up") adds new document to the collection.
+// This document consists of migration version, migration description and timestamp.
+// Each migration rollback ("down") removes a corresponding document from the collection.
+//
+// db                         - database connection
+// migrations                 - list of all registered migrations
+// migrationsCollection       - name of a collection where migrations are stored
+// migratedVersions           - list of migration versions stored in the database
+// isLoadedMigratedVersions   - whether loading of migratedVersions has already been done
+//
 type Migrate struct {
-	db                   *mongo.Database
-	migrations           []Migration
-	migrationsCollection string
+	db                       *mongo.Database
+	migrations               []Migration
+	migrationsCollection     string
+	migratedVersions         []uint64
+	isLoadedMigratedVersions bool
 }
 
 func NewMigrate(db *mongo.Database, migrations ...Migration) *Migrate {
 	internalMigrations := make([]Migration, len(migrations))
 	copy(internalMigrations, migrations)
 	return &Migrate{
-		db:                   db,
-		migrations:           internalMigrations,
-		migrationsCollection: defaultMigrationsCollection,
+		db:                       db,
+		migrations:               internalMigrations,
+		migrationsCollection:     defaultMigrationsCollection,
+		migratedVersions:         []uint64{},
+		isLoadedMigratedVersions: false,
 	}
 }
 
@@ -77,13 +89,29 @@ func (m *Migrate) createCollectionIfNotExist(name string) error {
 		return nil
 	}
 
-	command := bson.D{bson.E{Key: "create", Value: name}}
-	err = m.db.RunCommand(nil, command).Err()
-	if err != nil {
-		return err
-	}
+	ctx := context.Background()
 
-	return nil
+	// create collection and unique index by version in a transaction
+	err = m.db.Client().UseSession(ctx, func(sessionContext mongo.SessionContext) error {
+		if err := sessionContext.StartTransaction(); err != nil {
+			return err
+		}
+
+		command := bson.D{bson.E{Key: "create", Value: name}}
+		if err = m.db.RunCommand(nil, command).Err(); err == nil {
+			_, err = m.db.Collection(name).Indexes().CreateOne(ctx, mongo.IndexModel{
+				Keys: bson.D{{"version", 1}},
+				Options: options.Index().SetName(fmt.Sprintf("index-%s-on-version", name)),
+			})
+			sessionContext.CommitTransaction(sessionContext)
+			return nil
+		}
+
+		sessionContext.AbortTransaction(sessionContext)
+		return err
+	})
+
+	return err
 }
 
 func (m *Migrate) getCollections() (collections []collectionSpecification, err error) {
@@ -126,36 +154,60 @@ func (m *Migrate) getCollections() (collections []collectionSpecification, err e
 	return
 }
 
-// Version returns current database version and comment.
-func (m *Migrate) Version() (uint64, string, error) {
-	if err := m.createCollectionIfNotExist(m.migrationsCollection); err != nil {
-		return 0, "", err
+// loadMigratedVersions assigns migration versions stored in the database
+// to migratedVersions prop of Migrate object
+func (m *Migrate) loadMigratedVersions() error {
+	var err error
+
+	if err = m.createCollectionIfNotExist(m.migrationsCollection); err != nil {
+		return err
 	}
 
-	filter := bson.D{{}}
-	sort := bson.D{bson.E{Key: "_id", Value: -1}}
-	options := options.FindOne().SetSort(sort)
+	filter := bson.D{}
+	sort := bson.D{bson.E{Key: "version", Value: 1}}
+	projection := bson.D{{"version", 1}}
+	options := options.Find().SetSort(sort).SetProjection(projection)
 
-	// find record with greatest id (assuming it`s latest also)
-	result := m.db.Collection(m.migrationsCollection).FindOne(context.TODO(), filter, options)
-	err := result.Err()
-	switch {
-	case err == mongo.ErrNoDocuments:
-		return 0, "", nil
-	case err != nil:
-		return 0, "", err
+	cur, err := m.db.Collection(m.migrationsCollection).Find(context.TODO(), filter, options)
+	if err != nil {
+		return err
+	}
+	defer cur.Close(context.Background())
+
+	m.migratedVersions = []uint64{}
+
+	for cur.Next(context.Background()) {
+		var rec versionRecord
+		if err = cur.Decode(&rec); err != nil {
+			return err
+		}
+		m.addMigratedVersion(rec.Version)
 	}
 
-	var rec versionRecord
-	if err := result.Decode(&rec); err != nil {
-		return 0, "", err
+	if err = cur.Err(); err != nil {
+		return err
 	}
 
-	return rec.Version, rec.Description, nil
+	m.isLoadedMigratedVersions = true
+
+	return nil
 }
 
-// SetVersion forcibly changes database version to provided.
-func (m *Migrate) SetVersion(version uint64, description string) error {
+// addMigratedVersion adds version to migratedVersions prop of Migrate object.
+func (m *Migrate) addMigratedVersion(version uint64) {
+	m.migratedVersions = append(m.migratedVersions, version)
+}
+
+// removeMigratedVersion removes last version from migratedVersions prop of Migrate object.
+// TODO: implement removing of a specific version passed, in order to be able to rollback
+// arbitraty migration by it's version
+func (m *Migrate) removeMigratedVersion(version uint64) {
+	m.migratedVersions[len(m.migratedVersions)-1] = 0
+	m.migratedVersions = m.migratedVersions[:len(m.migratedVersions)-1]
+}
+
+// insertVersion inserts version record to migrations collection
+func (m *Migrate) insertVersion(version uint64, description string) error {
 	rec := versionRecord{
 		Version:     version,
 		Timestamp:   time.Now().UTC(),
@@ -163,20 +215,52 @@ func (m *Migrate) SetVersion(version uint64, description string) error {
 	}
 
 	_, err := m.db.Collection(m.migrationsCollection).InsertOne(context.TODO(), rec)
-	if err != nil {
-		return err
+
+	return err
+}
+
+// deleteVersion deletes version record from migrations collection
+func (m *Migrate) deleteVersion(version uint64) error {
+	query := bson.M{ "version": version }
+	_, err := m.db.Collection(m.migrationsCollection).DeleteOne(context.TODO(), query)
+
+	return err
+}
+
+// isMigratedVersion returns true if migration with specified version is migrated and false otherwise
+func (m *Migrate) isMigratedVersion(version uint64) bool {
+	for _, v := range m.migratedVersions {
+		if v == version {
+			return true
+		}
+	}
+	return false
+}
+
+// IsMigrated returns true if all migrations have been migrated, false otherwise.
+func (m *Migrate) IsMigrated() (bool, error) {
+	if !m.isLoadedMigratedVersions {
+		if err := m.loadMigratedVersions(); err != nil {
+			return false, err
+		}
 	}
 
-	return nil
+	for _, migration := range m.migrations {
+		if !m.isMigratedVersion(migration.Version) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // Up performs "up" migrations to latest available version.
 // If n<=0 all "up" migrations with newer versions will be performed.
 // If n>0 only n migrations with newer version will be performed.
 func (m *Migrate) Up(n int) error {
-	currentVersion, _, err := m.Version()
-	if err != nil {
-		return err
+	if !m.isLoadedMigratedVersions {
+		if err := m.loadMigratedVersions(); err != nil {
+			return err
+		}
 	}
 	if n <= 0 || n > len(m.migrations) {
 		n = len(m.migrations)
@@ -185,16 +269,17 @@ func (m *Migrate) Up(n int) error {
 
 	for i, p := 0, 0; i < len(m.migrations) && p < n; i++ {
 		migration := m.migrations[i]
-		if migration.Version <= currentVersion || migration.Up == nil {
+		if m.isMigratedVersion(migration.Version) || migration.Up == nil {
 			continue
 		}
 		p++
 		if err := migration.Up(m.db); err != nil {
 			return err
 		}
-		if err := m.SetVersion(migration.Version, migration.Description); err != nil {
+		if err := m.insertVersion(migration.Version, migration.Description); err != nil {
 			return err
 		}
+		m.addMigratedVersion(migration.Version)
 	}
 	return nil
 }
@@ -203,9 +288,10 @@ func (m *Migrate) Up(n int) error {
 // If n<=0 all "down" migrations with older version will be performed.
 // If n>0 only n migrations with older version will be performed.
 func (m *Migrate) Down(n int) error {
-	currentVersion, _, err := m.Version()
-	if err != nil {
-		return err
+	if !m.isLoadedMigratedVersions {
+		if err := m.loadMigratedVersions(); err != nil {
+			return err
+		}
 	}
 	if n <= 0 || n > len(m.migrations) {
 		n = len(m.migrations)
@@ -214,7 +300,7 @@ func (m *Migrate) Down(n int) error {
 
 	for i, p := len(m.migrations)-1, 0; i >= 0 && p < n; i-- {
 		migration := m.migrations[i]
-		if migration.Version > currentVersion || migration.Down == nil {
+		if !m.isMigratedVersion(migration.Version) || migration.Down == nil {
 			continue
 		}
 		p++
@@ -222,15 +308,10 @@ func (m *Migrate) Down(n int) error {
 			return err
 		}
 
-		var prevMigration Migration
-		if i == 0 {
-			prevMigration = Migration{Version: 0}
-		} else {
-			prevMigration = m.migrations[i-1]
-		}
-		if err := m.SetVersion(prevMigration.Version, prevMigration.Description); err != nil {
+		if err := m.deleteVersion(migration.Version); err != nil {
 			return err
 		}
+		m.removeMigratedVersion(migration.Version)
 	}
 	return nil
 }
